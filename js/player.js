@@ -1659,3 +1659,134 @@ async function switchToResource(sourceKey, vodId) {
         hideLoading();
     }
 }
+
+
+// 在全局变量部分添加
+let skipIntroDuration = 90; // 默认跳过90秒片头
+let skipEndingDuration = 90; // 默认跳过90秒片尾
+let skipEnabled = true; // 是否启用跳过功能
+let skipIntroButton = null; // 跳过片头按钮实例
+let skipEndingButton = null; // 跳过片尾按钮实例
+
+// 在initializePageContent函数中添加
+// 从本地存储加载跳过设置
+skipEnabled = localStorage.getItem('skipEnabled') !== 'false';
+skipIntroDuration = parseInt(localStorage.getItem('skipIntroDuration')) || 90;
+skipEndingDuration = parseInt(localStorage.getItem('skipEndingDuration')) || 90;
+
+// 修改ArtPlayer配置
+art = new Artplayer({
+    // ...其他配置保持不变...
+    settings: [
+        // 添加跳过功能设置
+        {
+            html: '跳过片头片尾',
+            tooltip: skipEnabled ? '开' : '关',
+            switch: skipEnabled,
+            onSwitch: function (item) {
+                skipEnabled = !skipEnabled;
+                item.switch = skipEnabled;
+                item.tooltip = skipEnabled ? '开' : '关';
+                localStorage.setItem('skipEnabled', skipEnabled);
+                return true;
+            },
+        },
+        {
+            html: '片头时长(秒)',
+            tooltip: skipIntroDuration,
+            onInput: function (item, event) {
+                const value = parseInt(event.target.value);
+                if (!isNaN(value)) {
+                    skipIntroDuration = value;
+                    item.tooltip = value;
+                    localStorage.setItem('skipIntroDuration', value);
+                }
+            },
+        },
+        {
+            html: '片尾时长(秒)',
+            tooltip: skipEndingDuration,
+            onInput: function (item, event) {
+                const value = parseInt(event.target.value);
+                if (!isNaN(value)) {
+                    skipEndingDuration = value;
+                    item.tooltip = value;
+                    localStorage.setItem('skipEndingDuration', value);
+                }
+            },
+        },
+        // 其他设置项...
+    ],
+});
+
+// 在播放器初始化后添加跳过按钮
+art.on('ready', () => {
+    // 创建跳过片头按钮
+    skipIntroButton = art.controls.add({
+        position: 'right',
+        html: '<svg width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M8,5.14V19.14L19,12.14L8,5.14Z"/></svg>',
+        tooltip: '跳过片头',
+        style: {padding: '0 10px'},
+        click: function () {
+            if (art && art.video) {
+                art.currentTime = Math.min(art.currentTime + skipIntroDuration, art.duration - 1);
+            }
+        }
+    });
+    
+    // 创建跳过片尾按钮
+    skipEndingButton = art.controls.add({
+        position: 'right',
+        html: '<svg width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M6,18L14.5,12L6,6V18ZM16,6V18H18V6H16Z"/></svg>',
+        tooltip: '跳过片尾',
+        style: {padding: '0 10px'},
+        click: function () {
+            if (art && art.video && autoplayEnabled && currentEpisodeIndex < currentEpisodes.length - 1) {
+                playNextEpisode();
+            }
+        }
+    });
+});
+
+// 在timeupdate事件中添加自动跳过逻辑
+art.on('video:timeupdate', function() {
+    const currentTime = art.currentTime;
+    const duration = art.duration;
+    
+    // 自动跳过片头
+    if (skipEnabled && currentTime < skipIntroDuration) {
+        // 显示提示（只在片头区间显示）
+        if (currentTime > 5 && currentTime < skipIntroDuration - 5) {
+            art.notice.show(`自动跳过片头 (${Math.floor(skipIntroDuration - currentTime)}秒)`);
+        }
+        art.currentTime = skipIntroDuration;
+    }
+    
+    // 自动跳过片尾（提前5秒触发）
+    if (skipEnabled && duration > 0 && autoplayEnabled && 
+        currentTime > duration - skipEndingDuration && 
+        currentTime < duration - 5 && 
+        !videoHasEnded &&
+        currentEpisodeIndex < currentEpisodes.length - 1) {
+        art.notice.show(`自动跳过片尾，播放下一集`);
+        playNextEpisode();
+    }
+    
+    // 控制跳过按钮的可见性
+    if (skipIntroButton) {
+        skipIntroButton.$el.style.display = (currentTime > 10 && currentTime < duration - skipIntroDuration - 30) ? 'block' : 'none';
+    }
+    if (skipEndingButton) {
+        const showEndingButton = autoplayEnabled && 
+            currentTime > duration - skipEndingDuration - 30 && 
+            currentTime < duration - 10 &&
+            currentEpisodeIndex < currentEpisodes.length - 1;
+        skipEndingButton.$el.style.display = showEndingButton ? 'block' : 'none';
+    }
+});
+
+// 在播放结束时隐藏跳过按钮
+art.on('video:ended', function () {
+    if (skipIntroButton) skipIntroButton.$el.style.display = 'none';
+    if (skipEndingButton) skipEndingButton.$el.style.display = 'none';
+});
